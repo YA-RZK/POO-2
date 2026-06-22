@@ -43,8 +43,8 @@ public class CampaignEndScreen implements Screen {
         fontMed  = new BitmapFont(); fontMed.getData().setScale(2.2f);
         fontSmall= new BitmapFont(); fontSmall.getData().setScale(1.5f);
 
-        // Grava o resumo final da campanha em campaign_log.txt
-        CampaignLogger.logCampaignSummary(missions);
+        // Grava o resumo final da campanha no CSV de summary
+        missions.flushSummary();
     }
 
     @Override
