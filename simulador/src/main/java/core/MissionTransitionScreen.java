@@ -7,6 +7,7 @@ import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 
 /**
  * Tela de transição exibida entre missões.
@@ -151,30 +152,34 @@ public class MissionTransitionScreen implements Screen {
         fontBig.setColor(resultColor());
         fontBig.draw(batch, resultLabel(), cx, topY - lineH);
 
-        // Descrição do resultado
+                // Descrição do resultado
         fontMed.setColor(Color.WHITE);
-        fontMed.draw(batch, missionResultMsg, cx, topY - lineH * 2 - 10);
+
+        GlyphLayout layout = new GlyphLayout();
+        layout.setText(fontMed, missionResultMsg, Color.WHITE, panelW - 60, 1, true);
+        fontMed.draw(batch, layout, cx, topY - lineH * 2 - 10);
+
+        int textBottomY = (int)(topY - lineH * 2 - 10 - layout.height);
 
         // Separador
         fontSmall.setColor(new Color(0.35f, 0.35f, 0.45f, 1f));
-        fontSmall.draw(batch, "────────────────────────────────────────────────", cx, topY - lineH * 3 - 10);
+        fontSmall.draw(batch, "────────────────────────────────────────────────", cx, textBottomY - 20);
 
         // Placar
         fontMed.setColor(new Color(0.80f, 0.80f, 1.00f, 1f));
-        fontMed.draw(batch, "Placar da campanha:", cx, topY - lineH * 3 - 30);
+        fontMed.draw(batch, "Placar da campanha:", cx, textBottomY - 50);
 
         fontSmall.setColor(COL_VICTORY);
-        fontSmall.draw(batch, "✔ " + missions.victories + " vitória(s)", cx, topY - lineH * 4 - 30);
+        fontSmall.draw(batch, "✔ " + missions.victories + " vitória(s)", cx, textBottomY - 100);
         fontSmall.setColor(COL_DEFEAT);
-        fontSmall.draw(batch, "✘ " + missions.defeats + " derrota(s)", cx + 220, topY - lineH * 4 - 30);
+        fontSmall.draw(batch, "✘ " + missions.defeats + " derrota(s)", cx + 220, textBottomY - 100);
         fontSmall.setColor(COL_DRAW);
-        fontSmall.draw(batch, "= " + missions.draws + " empate(s)", cx + 440, topY - lineH * 4 - 30);
+        fontSmall.draw(batch, "= " + missions.draws + " empate(s)", cx + 440, textBottomY - 100);
 
-        // Próxima missão ou fim
         fontSmall.setColor(new Color(0.35f, 0.35f, 0.45f, 1f));
-        fontSmall.draw(batch, "────────────────────────────────────────────────", cx, topY - lineH * 5 - 20);
+        fontSmall.draw(batch, "────────────────────────────────────────────────", cx, textBottomY - 140);
 
-        if (!missions.isFinished()) {
+if (!missions.isFinished()) {
             MapConfig nextCfg = missions.currentConfig();
             String nextTitle = nextCfg.missionTitle.isEmpty()
                 ? "Missão " + missions.currentMissionNumber()
