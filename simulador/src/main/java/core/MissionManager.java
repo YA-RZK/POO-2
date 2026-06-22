@@ -9,25 +9,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Classe MissionManager — gerencia a campanha como uma sequência de mapas.
+ * MissionManager — gerencia a sequência de mapas da campanha.
  *
- * Lê o arquivo campaign.json que lista os arquivos de mapa em ordem.
- * Se campaign.json não existir, usa uma campanha padrão embutida.
- *
- * Estrutura de campaign.json:
- * <pre>
- * {
- *   "campaignName": "Operação Resistência",
- *   "maps": [
- *     "map_missao_1.json",
- *     "map_missao_2.json",
- *     "map_missao_3.json"
- *   ]
- * }
- * </pre>
- *
- * Cada arquivo de mapa é um map_config.json normal, com os campos opcionais
- * "missionTitle" e "roundLimit" no nível raiz.
+ * Mantém uma instância de {@link CampaignLogger} criada junto com ele,
+ * garantindo que um único logger (e portanto um único par de CSVs) cobre
+ * toda a sessão — sem estado estático.
  */
 public class MissionManager {
 
@@ -35,46 +21,45 @@ public class MissionManager {
     // Estado
     // -------------------------------------------------------------------------
 
-    private final String       campaignName;
-    private final List<String> mapFiles;
-    private int                currentIndex = 0;
+    private final String         campaignName;
+    private final List<String>   mapFiles;
+    private int                  currentIndex = 0;
 
-    /** Placar acumulado da campanha. */
+    /** Logger persistente da sessão — criado no construtor, válido até o fim. */
+    private final CampaignLogger logger;
+
+    /** Placar acumulado. */
     public int victories = 0;
     public int defeats   = 0;
     public int draws     = 0;
 
     /**
-     * Histórico ordenado dos resultados de cada execução do mapa
-     * (1 entrada por mapa concluído, na ordem em que foram jogados).
-     * Usado para exibir os resultados individuais na tela final
-     * e para o log em arquivo .txt.
+     * Histórico ordenado dos resultados (1 entrada por missão concluída).
+     * Usado para exibir os resultados na tela final.
      */
     public final List<MissionResult> resultsHistory = new ArrayList<>();
 
     // -------------------------------------------------------------------------
-    // Enum de resultado de missão
+    // Enum
     // -------------------------------------------------------------------------
 
     public enum MissionResult { VICTORY, DEFEAT, DRAW }
 
     // -------------------------------------------------------------------------
-    // Construtor privado
+    // Construtor
     // -------------------------------------------------------------------------
 
     private MissionManager(String campaignName, List<String> mapFiles) {
         this.campaignName = campaignName;
         this.mapFiles     = mapFiles;
+        this.logger       = new CampaignLogger(campaignName);
     }
 
     // -------------------------------------------------------------------------
     // Fábrica
     // -------------------------------------------------------------------------
 
-    /**
-     * Carrega campaign.json (pasta local ou interna).
-     * Cai para a campanha padrão embutida se não encontrar.
-     */
+    /** Carrega campaign.json (local ou interno); cai no padrão se não achar. */
     public static MissionManager load() {
         try {
             FileHandle fh = Gdx.files.local("campaign.json");
@@ -94,13 +79,11 @@ public class MissionManager {
         try {
             JsonValue root = new JsonReader().parse(json);
             String name = root.getString("campaignName", "Campanha");
-
             List<String> files = new ArrayList<>();
             JsonValue mapsV = root.get("maps");
             if (mapsV != null) {
                 for (JsonValue mv : mapsV) files.add(mv.asString());
             }
-
             if (files.isEmpty()) return null;
             return new MissionManager(name, files);
         } catch (Exception e) {
@@ -122,22 +105,20 @@ public class MissionManager {
     // Navegação
     // -------------------------------------------------------------------------
 
-    /** Retorna o MapConfig do mapa atual (usa loadDefault se o arquivo não existir). */
+    /** MapConfig do mapa atual. */
     public MapConfig currentConfig() {
         if (isFinished()) return MapConfig.loadDefault();
         return MapConfig.loadFile(mapFiles.get(currentIndex));
     }
 
+    /** Avança registrando o resultado sem descrição. */
     public void advance(MissionResult result) {
         advance(result, "");
     }
 
     /**
-     * Avança para o próximo mapa registrando o resultado do atual.
-     * Também grava o resultado no arquivo campaign_log.txt.
-     *
-     * @param result      resultado da missão concluída
-     * @param description mensagem descritiva do resultado (opcional, vai para o log)
+     * Avança para o próximo mapa, registra o resultado no placar,
+     * no histórico e grava a linha no CSV via logger.
      */
     public void advance(MissionResult result, String description) {
         String mapFile   = currentFileName();
@@ -150,33 +131,33 @@ public class MissionManager {
         }
 
         resultsHistory.add(result);
-        CampaignLogger.logMissionResult(missionNo, totalMissions(), mapFile, result, description);
+        logger.logMission(missionNo, totalMissions(), mapFile, result, description);
 
         currentIndex++;
     }
 
-    /** Número do mapa atual (base-1). */
-    public int currentMissionNumber() { return currentIndex + 1; }
-
-    /** Total de missões na campanha. */
-    public int totalMissions() { return mapFiles.size(); }
-
-    /** Nome do arquivo do mapa atual. */
-    public String currentFileName() {
-        return isFinished() ? "(fim)" : mapFiles.get(currentIndex);
+    /**
+     * Grava o resumo final da campanha no CSV de summary.
+     * Deve ser chamado apenas uma vez, ao abrir a {@link CampaignEndScreen}.
+     */
+    public void flushSummary() {
+        logger.logSummary(this);
     }
 
-    /** True se todos os mapas já foram jogados. */
-    public boolean isFinished() { return currentIndex >= mapFiles.size(); }
+    // -------------------------------------------------------------------------
+    // Getters / utilitários
+    // -------------------------------------------------------------------------
 
-    public String getCampaignName() { return campaignName; }
+    public int    currentMissionNumber() { return currentIndex + 1; }
+    public int    totalMissions()        { return mapFiles.size(); }
+    public String currentFileName()      { return isFinished() ? "(fim)" : mapFiles.get(currentIndex); }
+    public boolean isFinished()          { return currentIndex >= mapFiles.size(); }
+    public String getCampaignName()      { return campaignName; }
 
-    /** Resumo do placar da campanha. */
     public String scoreString() {
         return "Vitórias: " + victories + "   Derrotas: " + defeats + "   Empates: " + draws;
     }
 
-    /** Resumo final com resultado global. */
     public String finalVerdict() {
         if (victories > defeats) return "CAMPANHA CONCLUÍDA — VITÓRIA GERAL!";
         if (defeats > victories) return "CAMPANHA CONCLUÍDA — DERROTA GERAL.";
