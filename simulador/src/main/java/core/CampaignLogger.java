@@ -1,74 +1,212 @@
 package core;
 
-import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.files.FileHandle;
-
+import java.io.File;
+import java.io.FileWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
 /**
- * Classe CampaignLogger — grava o histórico da campanha em um arquivo .txt
- * (campaign_log.txt), permitindo verificar depois se cada mapa terminou
- * em vitória, derrota ou empate.
+ * CampaignLogger — logger persistente da campanha.
  *
- * O arquivo é criado/atualizado na pasta de execução do programa
- * (mesmo local do .jar / projeto), usando Gdx.files.local().
- * Cada execução do programa acrescenta novas linhas ao final do arquivo
- * (não sobrescreve o histórico anterior).
+ * Gera dois arquivos na subpasta  logs/  (criada automaticamente ao lado do
+ * executável / pasta de trabalho):
+ *
+ *   logs/missions_<timestamp>.csv   — uma linha por missão concluída
+ *   logs/summary_<timestamp>.csv    — resumo da sessão inteira
+ *
+ * Um único timestamp (gerado no construtor) identifica a sessão, mantendo
+ * histórico de execuções anteriores intacto.
+ *
+ * Uso típico:
+ *   CampaignLogger logger = new CampaignLogger(campaignName);
+ *   logger.logMission(...);   // chamado a cada missão
+ *   logger.logSummary(...);   // chamado na tela final
  */
 public class CampaignLogger {
 
-    private static final String LOG_FILE = "campaign_log.txt";
+    // -------------------------------------------------------------------------
+    // Constantes
+    // -------------------------------------------------------------------------
 
-    /** Escreve uma linha simples no log, com timestamp. */
-    public static void log(String message) {
-        try {
-            FileHandle fh = Gdx.files.local(LOG_FILE);
+    /** Subpasta de saída, relativa ao diretório de trabalho do programa. */
+    private static final String LOGS_DIR =
+        System.getProperty("user.dir") + File.separator + "logs";
 
-            System.out.println("LOG PATH: " + fh.file().getAbsolutePath());
+    /** Cabeçalho do CSV de missões. */
+    private static final String MISSION_HEADER =
+        "sessao,timestamp,campanha,missao_num,total_missoes,arquivo_mapa,resultado,descricao\n";
 
-            String timestamp =
-                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+    /** Cabeçalho do CSV de resumo. */
+    private static final String SUMMARY_HEADER =
+        "sessao,timestamp,campanha,total_missoes,vitorias,derrotas,empates,veredito,";
 
-        fh.writeString(
-                "[" + timestamp + "] " + message + "\n",
-                true,
-                "UTF-8"
-        );
+    // -------------------------------------------------------------------------
+    // Estado da instância
+    // -------------------------------------------------------------------------
 
-    } catch (Exception e) {
-        e.printStackTrace();
+    private final String sessionId;   // timestamp de início da sessão
+    private final String campaignName;
+    private final String missionFile; // caminho: logs/missions_<sessao>.csv
+    private final String summaryFile; // caminho: logs/summary_<sessao>.csv
+
+    // -------------------------------------------------------------------------
+    // Construtor
+    // -------------------------------------------------------------------------
+
+    /**
+     * Cria um logger para a sessão atual.
+     * Cria a pasta  logs/  se não existir e escreve os cabeçalhos dos CSVs.
+     *
+     * @param campaignName nome da campanha (vai para todas as linhas do CSV)
+     */
+    public CampaignLogger(String campaignName) {
+        this.sessionId    = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        this.campaignName = escapeCsv(campaignName);
+        this.missionFile  = LOGS_DIR + "/missions_" + sessionId + ".csv";
+        this.summaryFile  = LOGS_DIR + "/summary_"  + sessionId + ".csv";
+
+        ensureLogsDir();
+        initFile(missionFile, MISSION_HEADER);
+        // O summary só recebe cabeçalho dinâmico (com colunas por execução) em logSummary()
     }
-}
 
-    /** Registra o resultado de uma missão/mapa concluído. */
-    public static void logMissionResult(int missionNumber, int totalMissions, String mapFile,
-                                         MissionManager.MissionResult result, String description) {
-        log("Mapa " + missionNumber + "/" + totalMissions + " (" + mapFile + ") -> "
-            + resultLabel(result)
-            + (description != null && !description.isEmpty() ? " | " + description : ""));
+    // -------------------------------------------------------------------------
+    // API pública
+    // -------------------------------------------------------------------------
+
+    /**
+     * Registra o resultado de uma missão concluída.
+     * Adiciona uma linha ao CSV de missões da sessão.
+     *
+     * @param missionNumber número da missão (base-1)
+     * @param totalMissions total de missões da campanha
+     * @param mapFile       nome do arquivo de mapa
+     * @param result        resultado (VICTORY / DEFEAT / DRAW)
+     * @param description   descrição opcional (ex.: "2 soldados chegaram")
+     */
+    public void logMission(int missionNumber, int totalMissions, String mapFile,
+                           MissionManager.MissionResult result, String description) {
+
+        String row = sessionId + ","
+                + nowTimestamp() + ","
+                + campaignName + ","
+                + missionNumber + ","
+                + totalMissions + ","
+                + escapeCsv(mapFile) + ","
+                + resultLabel(result) + ","
+                + escapeCsv(description == null ? "" : description)
+                + "\n";
+
+        appendToFile(missionFile, row);
     }
 
-    /** Registra o resumo final da campanha (chamado na tela de fim de campanha). */
-    public static void logCampaignSummary(MissionManager missions) {
-        log("==================================================");
-        log("RESUMO DA CAMPANHA: " + missions.getCampaignName());
-        for (int i = 0; i < missions.resultsHistory.size(); i++) {
-            log("  Execução " + (i + 1) + ": " + resultLabel(missions.resultsHistory.get(i)));
+    /**
+     * Registra o resumo final da campanha.
+     * Gera o CSV de resumo com uma coluna por execução individual.
+     *
+     * @param missions MissionManager já finalizado
+     */
+    public void logSummary(MissionManager missions) {
+        // Cabeçalho dinâmico: colunas fixas + execucao_1, execucao_2, …
+        StringBuilder header = new StringBuilder(SUMMARY_HEADER);
+        for (int i = 1; i <= missions.resultsHistory.size(); i++) {
+            header.append("execucao_").append(i).append(",");
         }
-        log("  Total -> Vitórias: " + missions.victories
-            + " | Derrotas: " + missions.defeats
-            + " | Empates: " + missions.draws);
-        log("  Veredito final: " + missions.finalVerdict());
-        log("==================================================");
+        // Remove última vírgula e fecha
+        if (missions.resultsHistory.size() > 0) {
+            header.setLength(header.length() - 1);
+        }
+        header.append("\n");
+
+        // Linha de dados
+        StringBuilder row = new StringBuilder();
+        row.append(sessionId).append(",")
+           .append(nowTimestamp()).append(",")
+           .append(campaignName).append(",")
+           .append(missions.totalMissions()).append(",")
+           .append(missions.victories).append(",")
+           .append(missions.defeats).append(",")
+           .append(missions.draws).append(",")
+           .append(escapeCsv(missions.finalVerdict())).append(",");
+
+        for (int i = 0; i < missions.resultsHistory.size(); i++) {
+            row.append(resultLabel(missions.resultsHistory.get(i)));
+            if (i < missions.resultsHistory.size() - 1) row.append(",");
+        }
+
+        row.append("\n");
+
+        initFile(summaryFile, header.toString());
+        appendToFile(summaryFile, row.toString());
     }
 
-    /** Converte o resultado em um rótulo de texto (PT-BR) para o log. */
+    // -------------------------------------------------------------------------
+    // Rótulos CSV
+    // -------------------------------------------------------------------------
+
+    /** Rótulo em inglês para uso no CSV (seguro para parsers). */
     public static String resultLabel(MissionManager.MissionResult result) {
         switch (result) {
             case VICTORY: return "VITORIA";
-            case DEFEAT:  return "DERROTA";
-            default:      return "EMPATE";
+            case DEFEAT: return "DERROTA";
+            default: return "EMPATE";
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers de I/O
+    // -------------------------------------------------------------------------
+
+    /** Garante que a pasta  logs/  existe ao lado do executável. */
+    private void ensureLogsDir() {
+        File dir = new File(LOGS_DIR);
+
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+
+        System.out.println("Logs serão salvos em: " + dir.getAbsolutePath());
+    }
+
+    /** Cria o arquivo e escreve o cabeçalho (não sobrescreve se já existir). */
+    private void initFile(String path, String header) {
+        try {
+            File file = new File(path);
+
+            if (!file.exists()) {
+                try (FileWriter writer = new FileWriter(file)) {
+                    writer.write(header);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** Acrescenta uma linha ao arquivo. */
+    private void appendToFile(String path, String content) {
+        try (FileWriter writer = new FileWriter(path, true)) {
+            writer.write(content);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** Timestamp legível para coluna do CSV. */
+    private static String nowTimestamp() {
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+    }
+
+    /**
+     * Escapa um valor para uso em CSV (RFC 4180):
+     * se contiver vírgula, aspas ou quebra de linha, envolve em aspas duplas
+     * e dobra as aspas internas.
+     */
+    private static String escapeCsv(String value) {
+        if (value == null) return "";
+        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        }
+        return value;
     }
 }
